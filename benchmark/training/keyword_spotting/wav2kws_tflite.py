@@ -31,6 +31,30 @@ WORD_LABELS = [
 ]
 
 
+def check_if_quantized(model_path):
+    """Check if a TFLite model is quantized"""
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+
+    # Get input and output details
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    # Check if input is quantized
+    input_quantized = input_details[0]["dtype"] == np.int8
+
+    # Check if output is quantized
+    output_quantized = output_details[0]["dtype"] == np.int8
+
+    print(f"Model: {model_path}")
+    print(f"Input tensor type: {input_details[0]['dtype']}")
+    print(f"Input quantized: {input_quantized}")
+    print(f"Output tensor type: {output_details[0]['dtype']}")
+    print(f"Output quantized: {output_quantized}")
+
+    return input_quantized or output_quantized
+
+
 def prepare_model_settings(label_count, flags):
     """Calculates common settings needed for all models.
     Args:
@@ -403,7 +427,9 @@ def main():
         flags.model_init_path = test_args.model_path
 
     # Load model
-    print(f"Loading model from {test_args.model_path}")
+    print(f"\n\nLoading model from {test_args.model_path}")
+    is_quantized = check_if_quantized(test_args.model_path)
+    print(f"Is the model quantized? {'Yes' if is_quantized else 'No'}\n\n")
     try:
         if flags.is_tflite:
             # For TFLite model, we'll load it during inference
