@@ -7,3 +7,4 @@ Untitled*
 aww_model.tflite
 .ipynb_checkpoints/
 plots/
+*.wav
