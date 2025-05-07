@@ -116,8 +116,14 @@ def load_audio_tf(wav_file, flags):
 
         # Normalize to [-1.0, 1.0] range
         if np.max(np.abs(audio)) > 0:  # Avoid division by zero
+            max_abs = np.max(np.abs(audio))
+            print(f"Python max_abs: {max_abs}")
+            # Convert to fixed-point representation (for comparison with C)
+            max_abs_fixed = int(max_abs * (2**31 - 1))
+            print(f"Python max_abs_fixed: {max_abs_fixed} (0x{max_abs_fixed:08X})")
             audio = audio / np.max(np.abs(audio))
 
+        # print("audio range:", np.min(audio), np.max(audio))
         # Convert numpy array to TensorFlow tensor
         wav = tf.convert_to_tensor(audio, dtype=tf.float32)
 
@@ -135,6 +141,7 @@ def load_audio_tf(wav_file, flags):
 
 
 def extract_mfcc_features_tf(wav, flags):
+    print("\n\nDebugging Audio Preprocessing\n\n")
     """Extract MFCC features using TensorFlow to match the training pipeline exactly"""
     # Prepare model settings
     model_settings = prepare_model_settings(len(WORD_LABELS), flags)
@@ -143,10 +150,25 @@ def extract_mfcc_features_tf(wav, flags):
     wav = tf.cast(wav, tf.float32)
     max_val = tf.reduce_max(tf.abs(wav))
     wav = wav / (max_val + 1e-6)  # Scale to [0, 1], avoid division by zero
-
+    print("[1] raw_samples: ", wav.numpy()[:10])
     # Apply time offset (matching the training pipeline)
     padded_wav = tf.pad(wav, [[2, 2]], mode="CONSTANT")
     shifted_wav = tf.slice(padded_wav, [2], [model_settings["desired_samples"]])
+
+    # DEBUG START
+    hann_window = tf.signal.hann_window(model_settings["window_size_samples"])
+
+    # Take the first window of samples (same size as window)
+    first_frame = shifted_wav[: model_settings["window_size_samples"]]
+
+    # Apply the Hann window
+    windowed_frame = first_frame * hann_window
+
+    # Print the first 10 values after windowing
+    print("[2] t_x_block: ", shifted_wav.numpy()[:10])
+    print("[3] window_coeffs: ", hann_window.numpy()[:10])
+    print("[4] t_window_samples: ", windowed_frame.numpy()[:10])
+    # DEBUG END
 
     # Compute STFT with Hann window
     stfts = tf.signal.stft(
@@ -155,8 +177,10 @@ def extract_mfcc_features_tf(wav, flags):
         frame_step=model_settings["window_stride_samples"],
         window_fn=tf.signal.hann_window,
     )
+    print("[5] fft_out: ", stfts.numpy()[0, :10])
     spectrogram = tf.abs(stfts)
-
+    print(np.max(spectrogram.numpy()))
+    print("[6] spectrogram: ", spectrogram.numpy()[0, :10])
     # Compute Mel spectrogram
     num_spectrogram_bins = tf.shape(stfts)[-1]
     linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
@@ -166,13 +190,21 @@ def extract_mfcc_features_tf(wav, flags):
         lower_edge_hertz=20.0,
         upper_edge_hertz=4000.0,
     )
+
     mel_spectrogram = tf.tensordot(spectrogram, linear_to_mel_weight_matrix, 1)
+    print("[7] mel_spectrogram: ", mel_spectrogram.numpy()[0, :10])
+
     mel_spectrogram.set_shape(spectrogram.shape[:-1].concatenate([40]))
 
     # Compute log-mel spectrogram and extract MFCCs
     log_mel_spectrogram = tf.math.log(mel_spectrogram + 1e-6)
+    print(np.max(log_mel_spectrogram.numpy()))
+    print("[8] log_mel_spectrogram: ", log_mel_spectrogram.numpy()[0, :10])
+
     mfccs = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrogram)
     mfccs = mfccs[..., : model_settings["dct_coefficient_count"]]
+    print(np.max(np.max(mfccs.numpy())))
+    print("[9] mfccs: ", mfccs.numpy()[0, :10])
 
     # Reshape to [spectrogram_length, dct_coefficient_count, 1]
     processed_features = tf.reshape(
@@ -217,9 +249,13 @@ def test_wav_file(model, wav_file, flags):
         # Prepare input data (quantize if needed)
         if input_details[0]["dtype"] == np.int8:
             input_scale, input_zero_point = input_details[0]["quantization"]
+            print(input_scale, input_zero_point)
+
             features_q = np.array(
                 features_np / input_scale + input_zero_point, dtype=np.int8
             )
+            print("[10] features_q: ", features_q[0, 0, :10])
+            # Set input tensor
             interpreter.set_tensor(input_details[0]["index"], features_q)
         else:
             interpreter.set_tensor(input_details[0]["index"], features_np)
